@@ -6,6 +6,13 @@ const DB_VERSION = 1;
 const ZOOM_MIN = 0.1;
 const ZOOM_MAX = 4;
 const GRID = 48;
+const STORE_OWNER = 'NathanFowler';
+const STORE_REPO = 'room-data';
+const STORE_STATE_PATH = 'data/state.json';
+const TOKEN_KEY = 'room.storeToken';
+const CONTENTS_MAX = 700 * 1024;
+const REMOTE_SAVE_MS = 1200;
+const GH_API = 'https://api.github.com';
 
 const REGIONS = [
   { id: 'xplorr', x: -60, y: -50, w: 1980, h: 1320, title: 'XPLORR', sub: 'capital raise' },
@@ -45,6 +52,7 @@ const SEED = () => [
     seedSrc: 'seed/xplorr-market-brief-2026-08-19.md',
   },
 ];
+const SEED_IDS = new Set(SEED().map((it) => it.id));
 
 const viewport = document.getElementById('viewport');
 const world = document.getElementById('world');
@@ -56,6 +64,9 @@ const modalTitle = document.getElementById('modal-title');
 const modalKicker = document.getElementById('modal-kicker');
 const modalRawBtn = document.getElementById('modal-raw');
 const confirmEl = document.getElementById('confirm');
+const connectEl = document.getElementById('connect');
+const connectError = document.getElementById('connect-error');
+const storeStatus = document.getElementById('store-status');
 
 const state = {
   items: [],
@@ -73,6 +84,18 @@ const state = {
 let db = null;
 let saveTimer = 0;
 let camTimer = 0;
+
+const remote = {
+  token: '',
+  rev: 0,
+  deletedIds: [],
+  uploaded: new Set(),
+  status: 'local',
+  error: '',
+  saveTimer: 0,
+  saving: false,
+  pending: false,
+};
 
 function uid(prefix) {
   return (prefix || 'i') + '-' + Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
@@ -106,6 +129,7 @@ function persistCameraSoon() {
 function persistItemsSoon() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(persistItemsNow, 80);
+  scheduleRemoteSave();
 }
 
 async function persistItemsNow() {
@@ -165,6 +189,411 @@ function blobDel(id) {
   const tx = db.transaction('blobs', 'readwrite');
   tx.objectStore('blobs').delete(id);
   return txDone(tx);
+}
+
+function isConnected() {
+  return Boolean(remote.token || (typeof localStorage !== 'undefined' && localStorage.getItem(TOKEN_KEY)));
+}
+
+function currentToken() {
+  return remote.token || localStorage.getItem(TOKEN_KEY) || '';
+}
+
+function setStoreStatus(kind, err) {
+  remote.status = kind;
+  if (err !== undefined) remote.error = err || '';
+  const connected = isConnected();
+  const btn = document.getElementById('btn-connect');
+  const signout = document.getElementById('btn-signout');
+  const hint = document.getElementById('hint');
+  if (btn) btn.hidden = connected;
+  if (signout) signout.hidden = !connected;
+  const labels = {
+    local: 'public seed',
+    connecting: 'connecting…',
+    loading: 'loading…',
+    saving: 'saving…',
+    unsaved: 'unsaved',
+    saved: 'private',
+    error: 'error',
+  };
+  if (storeStatus) {
+    storeStatus.hidden = !connected;
+    storeStatus.textContent = connected ? (labels[kind] || kind) : '';
+    storeStatus.dataset.kind = kind;
+    storeStatus.title = remote.error || (connected ? 'NathanFowler/room-data' : '');
+  }
+  if (hint) {
+    hint.textContent = connected
+      ? 'wheel zoom · space / middle / empty-drag pan · drop files · canvas saves to private repo'
+      : 'public seed on Pages · Connect to save the canvas privately · wheel zoom · drop files';
+  }
+}
+
+function openConnect() {
+  if (!connectEl) return;
+  connectEl.hidden = false;
+  if (connectError) connectError.textContent = '';
+  const input = document.getElementById('connect-token');
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+}
+
+function closeConnect() {
+  if (!connectEl) return;
+  connectEl.hidden = true;
+  const input = document.getElementById('connect-token');
+  if (input) input.value = '';
+}
+
+async function ghFetch(path, opts) {
+  opts = opts || {};
+  const t = currentToken();
+  if (!t) throw new Error('Not connected');
+  const headers = {
+    Accept: opts.raw ? 'application/vnd.github.raw' : 'application/vnd.github+json',
+    Authorization: 'Bearer ' + t,
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
+  if (opts.headers) Object.assign(headers, opts.headers);
+  if (opts.body && !opts.raw) headers['Content-Type'] = 'application/json';
+  const url = GH_API + '/repos/' + STORE_OWNER + '/' + STORE_REPO + (path || '');
+  return fetch(url, {
+    method: opts.method || 'GET',
+    headers,
+    body: opts.body == null ? undefined : (typeof opts.body === 'string' ? opts.body : JSON.stringify(opts.body)),
+  });
+}
+
+async function ghJson(path, opts) {
+  const res = await ghFetch(path, opts);
+  const text = await res.text();
+  let data = null;
+  if (text) {
+    try { data = JSON.parse(text); }
+    catch { data = { message: text }; }
+  }
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    const err = new Error((data && data.message) || ('GitHub ' + res.status));
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+  return data;
+}
+
+function bytesToBase64(u8) {
+  const parts = [];
+  const chunk = 0x2000;
+  for (let i = 0; i < u8.length; i += chunk) {
+    parts.push(String.fromCharCode.apply(null, u8.subarray(i, i + chunk)));
+  }
+  return btoa(parts.join(''));
+}
+
+function textToBase64(text) {
+  return bytesToBase64(new TextEncoder().encode(text));
+}
+
+function b64ToUtf8(b64) {
+  const bin = atob(String(b64).replace(/\n/g, ''));
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new TextDecoder().decode(u8);
+}
+
+function base64ToBlob(b64, mime) {
+  const bin = atob(String(b64).replace(/\n/g, ''));
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new Blob([u8], { type: mime || 'application/octet-stream' });
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || '');
+      const i = s.indexOf(',');
+      resolve(i >= 0 ? s.slice(i + 1) : s);
+    };
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+function needsRemoteUpload(it) {
+  return Boolean(it && it.blobId && !it.seedSrc);
+}
+
+function serializeItem(it) {
+  const o = {};
+  for (const k of Object.keys(it)) {
+    if (it[k] !== undefined) o[k] = it[k];
+  }
+  return o;
+}
+
+// Writes always go through git blobs/trees so files above CONTENTS_MAX (Contents API ~1MB) still land.
+async function commitPaths(files, message) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const ref = await ghJson('/git/ref/heads/main');
+      if (!ref || !ref.object) throw new Error('Private repo has no main branch');
+      const headSha = ref.object.sha;
+      const commit = await ghJson('/git/commits/' + headSha);
+      const treeItems = [];
+      for (const f of files) {
+        const blob = await ghJson('/git/blobs', {
+          method: 'POST',
+          body: { content: f.contentBase64, encoding: 'base64' },
+        });
+        if (!blob || !blob.sha) throw new Error('Blob create failed for ' + f.path);
+        treeItems.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha });
+      }
+      const tree = await ghJson('/git/trees', {
+        method: 'POST',
+        body: { base_tree: commit.tree.sha, tree: treeItems },
+      });
+      const next = await ghJson('/git/commits', {
+        method: 'POST',
+        body: { message: message, tree: tree.sha, parents: [headSha] },
+      });
+      await ghJson('/git/refs/heads/main', {
+        method: 'PATCH',
+        body: { sha: next.sha },
+      });
+      return next.sha;
+    } catch (err) {
+      lastErr = err;
+      if (err && (err.status === 422 || err.status === 409)) continue;
+      throw err;
+    }
+  }
+  throw lastErr || new Error('Save conflict');
+}
+
+async function loadRemoteState() {
+  const meta = await ghJson('/contents/' + STORE_STATE_PATH);
+  if (!meta) return { rev: 0, updatedAt: null, items: [], deletedIds: [] };
+  let json = '';
+  if (meta.content && meta.encoding === 'base64') {
+    json = b64ToUtf8(meta.content);
+  } else if (meta.sha) {
+    const blob = await ghJson('/git/blobs/' + meta.sha);
+    if (blob && blob.content) json = b64ToUtf8(blob.content);
+  }
+  if (!json) return { rev: 0, updatedAt: null, items: [], deletedIds: [] };
+  const data = JSON.parse(json);
+  return {
+    rev: data.rev || 0,
+    updatedAt: data.updatedAt || null,
+    items: Array.isArray(data.items) ? data.items : [],
+    deletedIds: Array.isArray(data.deletedIds) ? data.deletedIds : [],
+  };
+}
+
+async function fetchUpload(id, mime) {
+  const res = await ghFetch('/contents/uploads/' + encodeURIComponent(id), { raw: true });
+  if (res.ok) {
+    const buf = await res.arrayBuffer();
+    return new Blob([buf], { type: mime || 'application/octet-stream' });
+  }
+  if (res.status === 404) return null;
+  const meta = await ghJson('/contents/uploads/' + encodeURIComponent(id));
+  if (!meta) return null;
+  if (meta.content && meta.encoding === 'base64') {
+    return base64ToBlob(meta.content, mime);
+  }
+  if (meta.sha) {
+    const blob = await ghJson('/git/blobs/' + meta.sha);
+    if (blob && blob.content) return base64ToBlob(blob.content, mime);
+  }
+  throw new Error('Could not read upload ' + id + ' (HTTP ' + res.status + ')');
+}
+
+function isEmptyPrivate(data) {
+  return !data || (!data.rev && !(data.items && data.items.length) && !(data.deletedIds && data.deletedIds.length));
+}
+
+function mergePrivate(data) {
+  const privateItems = (data && data.items) || [];
+  const deleted = new Set((data && data.deletedIds) || []);
+  remote.deletedIds = [...deleted];
+  remote.rev = (data && data.rev) || 0;
+  if (isEmptyPrivate(data)) return false;
+  const byId = new Map(privateItems.map((it) => [it.id, it]));
+  for (const s of SEED()) {
+    if (!byId.has(s.id) && !deleted.has(s.id)) byId.set(s.id, s);
+  }
+  state.items = [...byId.values()];
+  for (const it of state.items) {
+    if (needsRemoteUpload(it)) remote.uploaded.add(it.blobId);
+  }
+  return true;
+}
+
+async function ensureSeedAssets(items) {
+  await Promise.all(items.map(async (it) => {
+    if (it.type === 'doc' && it.seedSrc && !it.body) {
+      try {
+        const res = await fetch(it.seedSrc);
+        if (res.ok) it.body = await res.text();
+      } catch { /* public seed missing offline */ }
+    }
+    if (it.type === 'image' && it.seedSrc && it.blobId) {
+      const existing = db ? await blobGet(it.blobId) : null;
+      if (!existing) {
+        try {
+          const res = await fetch(it.seedSrc);
+          if (res.ok) await blobPut(it.blobId, await res.blob());
+        } catch { /* card still shows title */ }
+      }
+    }
+  }));
+}
+
+async function rememberUploaded() {
+  if (!db) return;
+  const list = await kvGet('uploadedBlobs');
+  remote.uploaded = new Set(Array.isArray(list) ? list : []);
+}
+
+function scheduleRemoteSave() {
+  if (!isConnected()) return;
+  clearTimeout(remote.saveTimer);
+  remote.saveTimer = setTimeout(() => { persistRemoteNow(); }, REMOTE_SAVE_MS);
+  if (remote.status !== 'saving') setStoreStatus('unsaved');
+}
+
+async function persistRemoteNow() {
+  if (!isConnected()) return;
+  if (remote.saving) {
+    remote.pending = true;
+    return;
+  }
+  remote.saving = true;
+  setStoreStatus('saving');
+  try {
+    const files = [];
+    for (const it of state.items) {
+      if (!needsRemoteUpload(it)) continue;
+      if (remote.uploaded.has(it.blobId)) continue;
+      if (!db) throw new Error('Cannot read file bytes for ' + (it.title || it.id));
+      const blob = await blobGet(it.blobId);
+      if (!blob) throw new Error('Missing bytes for ' + (it.title || it.id) + ' — not saved');
+      const b64 = await blobToBase64(blob);
+      if (!b64) throw new Error('Could not encode ' + (it.title || it.id));
+      files.push({ path: 'uploads/' + it.blobId, contentBase64: b64, blobId: it.blobId });
+    }
+    const payload = {
+      rev: (remote.rev || 0) + 1,
+      updatedAt: new Date().toISOString(),
+      items: state.items.map(serializeItem),
+      deletedIds: remote.deletedIds.slice(),
+    };
+    files.push({
+      path: STORE_STATE_PATH,
+      contentBase64: textToBase64(JSON.stringify(payload, null, 2) + '\n'),
+    });
+    await commitPaths(files, 'canvas rev ' + payload.rev);
+    remote.rev = payload.rev;
+    for (const f of files) {
+      if (f.blobId) remote.uploaded.add(f.blobId);
+    }
+    if (db) {
+      await kvSet('uploadedBlobs', [...remote.uploaded]);
+      await kvSet('privateCache', payload);
+    }
+    setStoreStatus('saved', '');
+  } catch (err) {
+    console.warn('remote save failed', err);
+    setStoreStatus('error', err.message || 'save failed');
+  } finally {
+    remote.saving = false;
+    if (remote.pending) {
+      remote.pending = false;
+      scheduleRemoteSave();
+    }
+  }
+}
+
+async function loadFromRemote() {
+  setStoreStatus('loading');
+  const data = await loadRemoteState();
+  if (isEmptyPrivate(data)) {
+    if (!state.items.length) await applySeed();
+    remote.rev = 0;
+    remote.deletedIds = [];
+    setStoreStatus('unsaved', '');
+    return 'empty';
+  }
+  mergePrivate(data);
+  await ensureSeedAssets(state.items);
+  await hydrateBlobs(state.items);
+  if (db) {
+    await persistItemsNow();
+    await kvSet('privateCache', data);
+  }
+  setStoreStatus('saved', '');
+  return 'loaded';
+}
+
+async function submitConnect(e) {
+  e.preventDefault();
+  const input = document.getElementById('connect-token');
+  const t = (input && input.value || '').trim();
+  if (!t) {
+    if (connectError) connectError.textContent = 'Paste a fine-grained token for NathanFowler/room-data.';
+    return;
+  }
+  const prev = remote.token;
+  remote.token = t;
+  setStoreStatus('connecting', '');
+  if (connectError) connectError.textContent = '';
+  try {
+    const probe = await ghFetch('');
+    if (probe.status === 401 || probe.status === 403) {
+      throw new Error('Token rejected. It needs Contents read/write on NathanFowler/room-data only.');
+    }
+    if (probe.status === 404) {
+      throw new Error('Cannot see NathanFowler/room-data. Restrict the token to that repo.');
+    }
+    if (!probe.ok) throw new Error('GitHub ' + probe.status);
+    localStorage.setItem(TOKEN_KEY, t);
+    closeConnect();
+    const result = await loadFromRemote();
+    if (db) await persistItemsNow();
+    if (result === 'empty') scheduleRemoteSave();
+    render();
+  } catch (err) {
+    remote.token = prev;
+    const msg = err.message || 'connect failed';
+    if (connectError) connectError.textContent = msg;
+    setStoreStatus(isConnected() ? remote.status : 'local', msg);
+  }
+}
+
+function signOut() {
+  localStorage.removeItem(TOKEN_KEY);
+  remote.token = '';
+  remote.rev = 0;
+  remote.deletedIds = [];
+  remote.uploaded = new Set();
+  remote.pending = false;
+  clearTimeout(remote.saveTimer);
+  closeConnect();
+  moreMenu.hidden = true;
+  applySeed().then(() => {
+    state.camera = { ...START };
+    fitRegion('xplorr', false);
+    render();
+    setStoreStatus('local', '');
+  });
 }
 
 function objectUrlFor(id, blob) {
@@ -228,7 +657,15 @@ async function applySeed() {
 async function hydrateBlobs(items) {
   await Promise.all(items.map(async (it) => {
     if (!it.blobId) return;
-    const blob = await blobGet(it.blobId);
+    let blob = db ? await blobGet(it.blobId) : null;
+    if (!blob && isConnected() && needsRemoteUpload(it)) {
+      try {
+        blob = await fetchUpload(it.blobId, it.mime);
+        if (blob && db) await blobPut(it.blobId, blob);
+      } catch (err) {
+        console.warn('upload fetch failed', it.blobId, err);
+      }
+    }
     if (blob) objectUrlFor(it.blobId, blob);
   }));
 }
@@ -244,11 +681,15 @@ async function resetSeed() {
   state.editing = null;
   closeModal();
   await kvSet('seedVersion', 0);
+  remote.deletedIds = [];
+  remote.uploaded = new Set();
+  if (db) await kvSet('uploadedBlobs', []);
   await applySeed();
   state.camera = { ...START };
   applyCamera();
   persistCameraSoon();
   render();
+  if (isConnected()) scheduleRemoteSave();
 }
 
 function render() {
@@ -583,6 +1024,7 @@ function deleteSelected() {
   const it = find(state.selected);
   if (!it) return;
   state.items = state.items.filter((x) => x.id !== it.id);
+  if (SEED_IDS.has(it.id) && !remote.deletedIds.includes(it.id)) remote.deletedIds.push(it.id);
   if (it.blobId) blobDel(it.blobId);
   if (it.blobId && state.urls.has(it.blobId)) {
     URL.revokeObjectURL(state.urls.get(it.blobId));
@@ -819,6 +1261,7 @@ function bindUi() {
     }
     if (e.key === 'Escape') {
       if (!modal.hidden) { closeModal(); return; }
+      if (connectEl && !connectEl.hidden) { closeConnect(); return; }
       if (!confirmEl.hidden) { confirmEl.hidden = true; return; }
       if (state.editing) { finishEdit(); return; }
       state.selected = null;
@@ -886,6 +1329,15 @@ function bindUi() {
   };
   confirmEl.querySelector('.modal-back').onclick = () => { confirmEl.hidden = true; };
 
+  document.getElementById('btn-connect').onclick = () => { moreMenu.hidden = true; openConnect(); };
+  document.getElementById('btn-signout').onclick = () => signOut();
+  document.getElementById('connect-cancel').onclick = () => closeConnect();
+  document.getElementById('connect-form').onsubmit = submitConnect;
+  connectEl.querySelector('.modal-back').onclick = () => closeConnect();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && isConnected()) persistRemoteNow();
+  });
+
   document.querySelectorAll('.jumps button').forEach((b) => {
     b.onclick = () => jumpRegion(b.dataset.jump);
   });
@@ -933,21 +1385,53 @@ function helpText() {
     '- Delete / Backspace — remove selected',
     '- 1 Xplorr · 2 Nosis · 3 QRE · F / 0 fit Xplorr',
     '',
-    'Layout and uploaded file bytes live in this browser (IndexedDB). First visit seeds the Xplorr raise cluster. Reset seed is under ⋯ and needs you to type RESET.',
+    'The public room on GitHub Pages keeps the three regions, the links, and the market brief. Connect to see the rest. After Connect, the canvas — notes, positions, uploads — saves to the private repo NathanFowler/room-data. IndexedDB is a cache in this browser, not the source of truth.',
+    '',
+    'Connect: create a fine-grained PAT at github.com/settings/personal-access-tokens with access only to NathanFowler/room-data, Contents read/write. Paste it into Connect. Stored in this browser only. Sign out clears the token, not the private repo.',
+    '',
+    'Reset seed is under ⋯ and needs you to type RESET. If connected, that also resets the private store to the seed cluster.',
   ].join('\n');
 }
 
 async function main() {
   bindUi();
+  remote.token = (typeof localStorage !== 'undefined' && localStorage.getItem(TOKEN_KEY)) || '';
   try {
     db = await openDb();
-    await seedIfNeeded();
+    await rememberUploaded();
   } catch (err) {
     console.warn('Room storage unavailable, running without persistence', err);
-    state.items = SEED();
+  }
+  try {
+    if (isConnected()) {
+      try {
+        const result = await loadFromRemote();
+        if (result === 'empty') scheduleRemoteSave();
+      } catch (err) {
+        console.warn('remote load failed, trying cache', err);
+        const cache = db ? await kvGet('privateCache') : null;
+        if (cache && ((cache.items || []).length || (cache.deletedIds || []).length)) {
+          mergePrivate(cache);
+          await ensureSeedAssets(state.items);
+          if (db) await hydrateBlobs(state.items);
+          setStoreStatus('error', err.message || 'offline cache');
+        } else {
+          await applySeed();
+          setStoreStatus('error', err.message || 'could not load private canvas');
+        }
+      }
+    } else {
+      await applySeed();
+      setStoreStatus('local', '');
+    }
+  } catch (err) {
+    console.warn(err);
+    if (!state.items.length) state.items = SEED();
+    setStoreStatus(isConnected() ? 'error' : 'local', err.message || '');
   }
   fitRegion('xplorr', false);
   render();
+  setStoreStatus(remote.status, remote.error);
   requestAnimationFrame(() => {
     fitRegion('xplorr', false);
   });

@@ -434,3 +434,64 @@ input, textarea {
 #reset-go { border-color: var(--danger); color: #f0c2b4; }
 
 .empty-world-ok { pointer-events: none; }
+
+#btn-connect {
+  border-color: rgba(204, 122, 41, 0.55);
+  color: #e6c08a;
+  background: var(--ochre-dim);
+}
+#btn-connect:hover { background: rgba(204, 122, 41, 0.28); }
+#btn-signout { color: var(--muted); }
+#store-status {
+  font-family: var(--ui-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 6px;
+  white-space: nowrap;
+}
+#store-status[data-kind="saved"] { color: #8fba86; }
+#store-status[data-kind="saving"],
+#store-status[data-kind="loading"],
+#store-status[data-kind="connecting"],
+#store-status[data-kind="unsaved"] { color: #d9b27a; }
+#store-status[data-kind="error"] { color: #e0a090; }
+
+#connect[hidden] { display: none; }
+#connect {
+  position: fixed;
+  inset: 0;
+  z-index: 42;
+}
+.connect-card { width: min(520px, calc(100vw - 40px)); margin: 12vh auto 0; }
+.connect-steps {
+  margin: 10px 0 14px;
+  padding-left: 18px;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.connect-steps li { margin: 6px 0; }
+.connect-steps a { color: #e6c08a; }
+.connect-label {
+  display: block;
+  font-family: var(--ui-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ochre);
+  margin-bottom: 6px;
+}
+#connect-token { width: 100%; margin: 0 0 8px; }
+#connect-error {
+  min-height: 1.2em;
+  margin: 0 0 12px;
+  color: #e0a090;
+  font-size: 13px;
+}
+#connect-go {
+  border-color: rgba(204, 122, 41, 0.55);
+  color: #e6c08a;
+  background: var(--ochre-dim);
+}

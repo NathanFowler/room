@@ -28,6 +28,9 @@
       <button type="button" id="btn-link" title="Add a link">+ Link</button>
       <button type="button" id="btn-fit" title="Fit cluster">Fit</button>
       <span id="zoom-readout">100%</span>
+      <span id="store-status" data-kind="local" hidden></span>
+      <button type="button" id="btn-connect" title="Save canvas to the private repo">Connect</button>
+      <button type="button" id="btn-signout" hidden title="Clear the token from this browser">Sign out</button>
       <button type="button" id="btn-more" aria-haspopup="true" aria-expanded="false" title="More">⋯</button>
     </div>
   </header>
@@ -37,7 +40,7 @@
     <button type="button" id="btn-help">Keys</button>
   </div>
 
-  <p id="hint">wheel zoom · space / middle / empty-drag pan · drop files · double-click for a note</p>
+  <p id="hint">public seed on Pages · Connect to save the canvas privately · wheel zoom · drop files</p>
 
   <div id="modal" hidden>
     <div class="modal-back"></div>
@@ -58,7 +61,7 @@
     <div class="modal-back"></div>
     <form class="confirm-card" id="reset-form">
       <h2>Reset seed</h2>
-      <p>Wipes this browser’s canvas — including uploaded files — and restores the Xplorr raise cluster. Type <strong>RESET</strong> to confirm.</p>
+      <p>Wipes this browser’s canvas — including uploaded files — and restores the Xplorr raise cluster. If connected, the private store is reset to that cluster too. Type <strong>RESET</strong> to confirm.</p>
       <input id="reset-typed" type="text" autocomplete="off" spellcheck="false" placeholder="RESET">
       <div class="confirm-row">
         <button type="button" id="reset-cancel">Cancel</button>
@@ -67,6 +70,27 @@
     </form>
   </div>
 
-  <script src="app.js?v=fit1"></script>
+  <div id="connect" hidden>
+    <div class="modal-back"></div>
+    <form class="confirm-card connect-card" id="connect-form">
+      <h2>Connect private canvas</h2>
+      <p>The public Room shell stays on GitHub Pages. Notes, positions, and uploads save to the private repo <strong>NathanFowler/room-data</strong> — never as commits on the public site. IndexedDB is a cache in this browser, not the source of truth.</p>
+      <ol class="connect-steps">
+        <li>Create a fine-grained PAT at <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener noreferrer">github.com/settings/personal-access-tokens</a>.</li>
+        <li>Resource owner: you. Only repository: <strong>NathanFowler/room-data</strong>.</li>
+        <li>Permissions: <strong>Contents — Read and write</strong>.</li>
+        <li>Paste it here. Stored in this browser only (localStorage). Never committed, never asked for in chat.</li>
+      </ol>
+      <label class="connect-label" for="connect-token">Token</label>
+      <input id="connect-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      <p id="connect-error" role="alert"></p>
+      <div class="confirm-row">
+        <button type="button" id="connect-cancel">Cancel</button>
+        <button type="submit" id="connect-go">Connect</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js?v=priv1"></script>
 </body>
 </html>

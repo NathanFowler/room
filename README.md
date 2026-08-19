@@ -2,9 +2,13 @@
 
 Nathan’s spatial 360. An infinite canvas for pinning files, notes, decks and links next to their subject. Projects are regions, not folders.
 
-Public: https://nathanfowler.github.io/room/
+Public shell: https://nathanfowler.github.io/room/
 
-No login. No backend. Layout and uploaded file bytes stay in this browser (IndexedDB). First visit seeds the Xplorr capital-raise cluster from `/seed`. ⋯ → Reset seed (type `RESET`) restores that cluster and wipes local uploads.
+The shell can stay public. The canvas — notes, uploads, positions, and raise files — saves to the private repo `NathanFowler/room-data` after you Connect. It is never committed to this Pages repo. IndexedDB is a cache in the browser, not the source of truth.
+
+On first visit (no token): the public Xplorr seed cluster from `/seed`. Connect with a fine-grained PAT that can only read/write `NathanFowler/room-data` (Contents). The token lives in this browser’s localStorage. Sign out clears it; the private repo is unchanged.
+
+Another machine: Connect with the same token, see the same canvas.
 
 ## Move around
 - Wheel zooms toward the cursor. Pinch / ctrl-wheel also zooms.
