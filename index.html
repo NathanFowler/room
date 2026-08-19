@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Room</title>
+  <meta name="description" content="Nathan's spatial 360. Pin things next to their subject.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%2312100e'/><text x='16' y='22' text-anchor='middle' font-size='16' fill='%23cc7a29'>R</text></svg>">
+</head>
+<body>
+  <div id="viewport">
+    <div id="world"></div>
+  </div>
+
+  <header id="top">
+    <div class="brand">
+      <span class="wordmark">Room</span>
+      <span class="tag">360</span>
+    </div>
+    <nav class="jumps" aria-label="Regions">
+      <button type="button" data-jump="xplorr">Xplorr</button>
+      <button type="button" data-jump="nosis">Nosis</button>
+      <button type="button" data-jump="qre">QRE</button>
+    </nav>
+    <div class="tools">
+      <button type="button" id="btn-note" title="Add a note (N)">+ Note</button>
+      <button type="button" id="btn-link" title="Add a link">+ Link</button>
+      <button type="button" id="btn-fit" title="Fit cluster">Fit</button>
+      <span id="zoom-readout">100%</span>
+      <button type="button" id="btn-more" aria-haspopup="true" aria-expanded="false" title="More">⋯</button>
+    </div>
+  </header>
+
+  <div id="more-menu" hidden>
+    <button type="button" id="btn-reset">Reset seed…</button>
+    <button type="button" id="btn-help">Keys</button>
+  </div>
+
+  <p id="hint">wheel zoom · space / middle / empty-drag pan · drop files · double-click for a note</p>
+
+  <div id="modal" hidden>
+    <div class="modal-back"></div>
+    <div class="modal-frame" role="dialog" aria-modal="true">
+      <header class="modal-bar">
+        <span id="modal-kicker"></span>
+        <h2 id="modal-title"></h2>
+        <div class="modal-actions">
+          <button type="button" id="modal-raw" hidden>Raw</button>
+          <button type="button" id="modal-close">Close</button>
+        </div>
+      </header>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="confirm" hidden>
+    <div class="modal-back"></div>
+    <form class="confirm-card" id="reset-form">
+      <h2>Reset seed</h2>
+      <p>Wipes this browser’s canvas — including uploaded files — and restores the Xplorr raise cluster. Type <strong>RESET</strong> to confirm.</p>
+      <input id="reset-typed" type="text" autocomplete="off" spellcheck="false" placeholder="RESET">
+      <div class="confirm-row">
+        <button type="button" id="reset-cancel">Cancel</button>
+        <button type="submit" id="reset-go" disabled>Reset</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
