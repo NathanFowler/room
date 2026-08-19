@@ -642,16 +642,34 @@ function animateTo(x, y, scale) {
   requestAnimationFrame(step);
 }
 
-function jumpRegion(id) {
+function regionCamera(id) {
   const r = REGIONS.find((x) => x.id === id);
-  if (!r) return;
-  const cx = r.x + r.w / 2;
-  const cy = r.y + r.h / 2;
+  if (!r) return null;
   const pad = 80;
-  const sx = (innerWidth - pad) / r.w;
-  const sy = (innerHeight - pad) / r.h;
-  animateTo(cx, cy, clamp(Math.min(sx, sy), ZOOM_MIN, 1.2));
+  const vw = Math.max(innerWidth, 320);
+  const vh = Math.max(innerHeight, 240);
+  const sx = (vw - pad) / r.w;
+  const sy = (vh - pad) / r.h;
+  return {
+    x: r.x + r.w / 2,
+    y: r.y + r.h / 2,
+    scale: clamp(Math.min(sx, sy), ZOOM_MIN, 1.2),
+  };
+}
+
+function fitRegion(id, animate) {
+  const cam = regionCamera(id);
+  if (!cam) return;
   document.querySelectorAll('.jumps button').forEach((b) => b.classList.toggle('on', b.dataset.jump === id));
+  if (animate) animateTo(cam.x, cam.y, cam.scale);
+  else {
+    state.camera = { ...cam };
+    applyCamera();
+  }
+}
+
+function jumpRegion(id) {
+  fitRegion(id, true);
 }
 
 function renderMarkdown(src) {
@@ -921,18 +939,18 @@ function helpText() {
 
 async function main() {
   bindUi();
-  applyCamera();
   try {
     db = await openDb();
-    const cam = await kvGet('camera');
-    if (cam && typeof cam.scale === 'number') state.camera = cam;
     await seedIfNeeded();
   } catch (err) {
     console.warn('Room storage unavailable, running without persistence', err);
     state.items = SEED();
   }
-  applyCamera();
+  fitRegion('xplorr', false);
   render();
+  requestAnimationFrame(() => {
+    fitRegion('xplorr', false);
+  });
 }
 
 main();
