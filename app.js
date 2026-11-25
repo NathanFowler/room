@@ -912,7 +912,7 @@ async function fillModal(it) {
       const src = (match && match.blobId && state.urls.get(match.blobId)) || s.src;
       figs.push(`<figure><img src="${esc(src)}" alt="${esc(s.caption)}"><figcaption>${esc(s.caption)}</figcaption></figure>`);
     }
-    modalBody.innerHTML = `<p class="excerpt" style="color:var(--muted);font-family:var(--ui-sans)"></p><div class="slides">${figs.join('')}</div>`;
+    modalBody.innerHTML = `<div class="slides">${figs.join('')}</div>`;
     return;
   }
   if (it.type === 'link') {
